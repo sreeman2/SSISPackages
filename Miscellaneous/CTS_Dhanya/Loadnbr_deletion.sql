@@ -1,0 +1,37 @@
+ 
+Description: Staging queries
+ 
+begin tran
+
+-- select top 10 * from pes_stg_cmd (nolock)
+
+-- Count = 64478
+
+update pes_stg_bol set is_deleted = 'Y',modify_date = getdate(),modify_user = 'TA14903'
+where ref_load_num_id in 
+(12295001, 12307001, 9070001,12308001, 9071001, 12309001, 12296001, 
+12310001, 9072001, 12311001, 12297001, 12312001, 9073001, 12313001, 
+9074001, 12327001, 12328001, 12314001, 12299001, 12315001, 9076001, 
+12316001, 12300001, 12317001, 9077001, 12318001, 12329001, 12303001, 12319001, 9078001, 12320001)
+and isnull(is_deleted,'') <> 'Y'
+
+-- Count = 44120
+
+update pes_stg_cmd set is_delete = 'Y',modify_date = getdate(),modify_user = 'TA14903'
+
+where bol_id in 
+
+( select bol_id from pes_stg_bol (nolock)
+
+where ref_load_num_id in (12295001, 12307001, 9070001,12308001, 9071001, 12309001, 12296001, 
+12310001, 9072001, 12311001, 12297001, 12312001, 9073001, 12313001, 
+9074001, 12327001, 12328001, 12314001, 12299001, 12315001, 9076001, 
+12316001, 12300001, 12317001, 9077001, 12318001, 12329001, 12303001, 12319001, 9078001, 12320001)
+)
+and isnull(is_delete,'') <> 'Y'
+
+commit tran
+
+ 
+
+ 

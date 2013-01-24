@@ -1,0 +1,60 @@
+select top 10 * from PES_Ref_Company (nolock)
+where name like '%3M%'
+
+BEGIN TRAN
+UPDATE PES_REF_COMPANY SET NAME = '3M COMPANY',modified_dt = getdate(),modified_by = 'TA14800'
+WHERE COMP_ID IN 
+(
+32118212,
+36802426, 
+36842934, 
+37273873, 
+37290754, 
+37293221, 
+37323389, 
+37324496, 
+37338487, 
+37340961, 
+37389330, 
+37395909
+)
+COMMIT TRAN
+
+
+
+select * from pes_lib_company (nolock)
+where comp_id in 
+(
+32118212,
+36802426, 
+36842934, 
+37273873, 
+37290754, 
+37293221, 
+37323389, 
+37324496, 
+37338487, 
+37340961, 
+37389330, 
+37395909
+)
+
+select * from pes_ref_company (nolock)
+where comp_id in 
+(
+32118212,
+36802426, 
+36842934, 
+37273873, 
+37290754, 
+37293221, 
+37323389, 
+37324496, 
+37338487, 
+37340961, 
+37389330, 
+37395909
+)
+
+
+

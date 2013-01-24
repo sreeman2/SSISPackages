@@ -1,0 +1,409 @@
+  
+  
+  
+  
+-- =============================================  
+-- Author:  <Author,,Name>  
+-- Create date: <Create Date,,>  
+-- Description: <Description,,>  
+-- =============================================  
+CREATE PROCEDURE [dbo].[LOAD_QC_EXCP_COUNTS]   
+ @EDIT_MODE  TINYINT    , --1: ADMIN, 2: EXCEPTION MGMT --not used!!!  
+ @DIR   VARCHAR(1)   , --I: IMPORT, E:EXPORT  
+ @CATEGORY  VARCHAR(50)   ,  
+ @CATEGORY_VAL VARCHAR(50)  = NULL ,  
+ @MOD_BY_USERS VARCHAR(MAX)  , --not used!!!  
+ @IS_DELETED  BIT    --1:DELETED, 0:ACTIVE --not used!!!  
+AS  
+BEGIN  
+-- SET NOCOUNT ON added to prevent extra result sets from  
+SET NOCOUNT ON;  
+  
+---- [Pramod K] - 09/24/2010  
+---- Log start time  
+--DECLARE @IdLogOut int  
+--DECLARE @ParametersIn varchar(MAX)  
+--SET @ParametersIn =  
+-- '@EDIT_MODE='+LTRIM(RTRIM(STR(@EDIT_MODE)))  
+--+', @DIR='''+@DIR+''''  
+--+', @CATEGORY='''+@CATEGORY+''''  
+--+', @CATEGORY_VAL='+COALESCE(''''+@CATEGORY_VAL+'''','NULL')  
+----+', @MOD_BY_USERS='''+@MOD_BY_USERS+''''  
+----+', @IS_DELETED='++LTRIM(RTRIM(STR(@IS_DELETED)))  
+--EXEC SCREEN_TEST.dbo.usp_LogSProcCallsStart  
+-- @SprocName = 'LOAD_QC_EXCP_COUNTS'  
+--,@Parameters = @ParametersIn  
+--,@IdLog = @IdLogOut OUT  
+  
+-- [aa] - 11/28/2010  
+-- Log start time  
+DECLARE @IdLogOut int, @DbName varchar(100), @SprocName varchar(100), @ParametersIn varchar(MAX)  
+SELECT @DbName = @@SERVERNAME + '; ' + DB_NAME(), @SprocName = OBJECT_NAME(@@PROCID)  
+,@ParametersIn = '@EDIT_MODE='+LTRIM(RTRIM(STR(@EDIT_MODE)))  
++', @DIR='''+@DIR+''''  
++', @CATEGORY='''+@CATEGORY+''''  
++', @CATEGORY_VAL='+COALESCE(''''+@CATEGORY_VAL+'''','NULL')  
+EXEC SCREEN_TEST.dbo.usp_LogSProcCallsStart  
+ @DbName = @DbName ,@SprocName = @SprocName ,@Parameters = @ParametersIn ,@IdLog = @IdLogOut OUT  
+  
+  
+SET @CATEGORY_VAL = REPLACE(@CATEGORY_VAL, '''', '')  
+  
+DECLARE @CATEGORY_TYPE AS SMALLINT  
+SET @CATEGORY_TYPE = 1 --DEFAULT TYPE AS DAILY_LOAD_DT  
+  
+IF ( @CATEGORY = 'DAILY_LOAD_DT' )  
+BEGIN  
+ IF ( @CATEGORY_VAL IS NULL )   
+  SET @CATEGORY_TYPE = 1 -- B.DAILY_LOAD_DT IS NOT NULL   
+ ELSE  
+  SET @CATEGORY_TYPE = 3  
+ --B.DAILY_LOAD_DT IS NOT NULL AND convert(VARCHAR(10),b.DAILY_LOAD_DT,101) IN (@CATEGORY_VAL)  
+END  
+ELSE IF ( ( @CATEGORY = 'VDATE' OR @CATEGORY = 'VDATE AS PRODMONTH' ) )  
+BEGIN   
+ IF ( @CATEGORY_VAL IS NULL )  
+  SET @CATEGORY_TYPE = 2 --B.VDATE IS NOT NULL  
+ ELSE IF ( @CATEGORY = 'VDATE' )  
+  SET @CATEGORY_TYPE = 4   
+  --B.VDATE IS NOT NULL AND B.VDATE BETWEEN CONVERT(SMALLDATETIME,'" & strCategoryValues & "') AND DATEADD(DD,7,CONVERT(SMALLDATETIME,'" & strCategoryValues & "'))  
+ ELSE IF ( @CATEGORY = 'VDATE AS PRODMONTH' )   
+  SET @CATEGORY_TYPE = 5   
+  --B.VDATE IS NOT NULL AND DATENAME(MM,b.VDATE) + ' ' + DATENAME(YYYY,b.VDATE) = '" & strCategoryValues & "'  
+END  
+ELSE IF ( @CATEGORY = 'LOAD_NBR' )  
+BEGIN  
+ IF ( @CATEGORY_VAL IS NULL )  
+ BEGIN  
+  SET @CATEGORY_TYPE = 6   
+  --B.LOAD_NBR IS NOT NULL     
+ END  
+ ELSE  
+  SET @CATEGORY_TYPE = 7 --AND LOAD_NBR IN (@CATEGORY_VAL)  
+END  
+ELSE IF ( @CATEGORY = 'LATE BILLS' )  
+BEGIN  
+ SET @CATEGORY_TYPE = 8  
+END  
+ELSE  
+BEGIN  
+ SET @CATEGORY_TYPE = 9  
+ --B.CATEGORY  
+END  
+  
+IF ( @CATEGORY_TYPE = 1 OR @CATEGORY_TYPE = 2 )  
+BEGIN  
+ SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (    
+  (     
+   ( CASE   
+     --WHEN @CATEGORY_TYPE = 6 THEN b.LOAD_NBR ELSE ( CASE   
+     WHEN @CATEGORY_TYPE = 1 THEN b.DAILY_LOAD_DT ELSE ( CASE   
+     WHEN @CATEGORY_TYPE = 2 THEN b.VDATE END ) END )    
+    IS NOT NULL   
+  )    
+  AND ( v.dir = @DIR )   
+  AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )    
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 6 )  
+BEGIN  
+SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c WITH (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (    
+  (   
+   b.LOAD_NBR IS NOT NULL    
+  )   
+  AND ( v.dir = @DIR )  
+  AND   
+  (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )  
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 3 )  
+BEGIN  
+    
+ SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending    ,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete    ,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount     ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted ,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (    
+  (   
+   CONVERT(VARCHAR(10),b.DAILY_LOAD_DT,101) = (@CATEGORY_VAL) --( b.DAILY_LOAD_DT IS NOT NULL ) AND   
+  )     
+  AND ( v.dir = @DIR )  
+  AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )     
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 4 )  
+BEGIN  
+ SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending    ,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete    ,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount     ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted ,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (    
+  (   
+   B.VDATE BETWEEN CONVERT(SMALLDATETIME, @CATEGORY_VAL )   
+   AND  DATEADD(DD,7,CONVERT(SMALLDATETIME, @CATEGORY_VAL ) )   
+  )  
+  AND ( v.dir = @DIR )       
+  AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )    
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 5 )  
+BEGIN  
+ SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending    ,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete    ,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount     ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted ,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (      
+  (   
+   --B.VDATE IS NOT NULL   
+   ( DATENAME(MM,b.VDATE)+ ' ' +DATENAME(YYYY,b.VDATE)= @CATEGORY_VAL )  
+  )  
+  AND ( v.dir = @DIR )     
+  AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )  
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 7 )  
+BEGIN  
+ SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending    ,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete    ,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount     ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted ,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE   
+ (  
+  (     
+   --b.LOAD_NBR IS NOT NULL AND   
+   b.LOAD_NBR = (CAST(@CATEGORY_VAL AS NUMERIC(12,0)))  
+  )    
+  AND ( v.dir = @DIR )   
+  AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )       
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+END  
+ELSE IF ( @CATEGORY_TYPE = 8 )  
+BEGIN  
+  
+SELECT   
+  d.PROCESS_NAME AS Exception ,   
+  d.GROUPING_FLG AS Grouping,   
+  SUM   
+  (   
+   CASE v.COMPLETE_STATUS   
+   WHEN '1' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END )   
+   WHEN '0' THEN 0 END   
+  ) AS Pending,   
+  SUM  
+  (  
+   CASE v.COMPLETE_STATUS WHEN '0' THEN ( CASE UPPER(b.IS_DELETED) WHEN 'Y' THEN 0 ELSE 1 END ) ELSE 0 END   
+  ) AS Complete,  
+  COUNT(B.T_NBR) AS Total  ,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 0 ELSE 1 END)- SUM(CASE v.complete_status WHEN '0' THEN 1 ELSE 0 END)) UnlockedRecordCount,  
+  ABS(SUM(CASE LTRIM(RTRIM(UPPER(b.locked_by_usr))) WHEN ISNULL(LTRIM(RTRIM(UPPER(b.locked_by_usr))),'')  THEN 1 ELSE 0 END)) AS LockedRecordCount, SUM(CASE UPPER(b.is_deleted) WHEN 'Y' THEN 1 ELSE 0 END) as Deleted,   
+  C.GROUP_ID   
+ FROM CTRL_PROCESS_DEFINITION AS d WITH (NOLOCK)   
+ JOIN CTRL_PROCESS_VOYAGE AS v WITH (NOLOCK) ON d.PROCESS_NAME = v.PROCESS_NAME   
+ JOIN DQA_BL AS b WITH (NOLOCK) ON b.T_NBR = v.T_NBR   
+ JOIN CTRL_QC_MODIFY c WITH (NOLOCK) ON D.PROCESS_NAME = C.[KEY]   
+ WHERE ( ( b.VDATE < ( SELECT START_DT FROM DQA_PROD_MONTH WITH (NOLOCK)) )    
+ AND ( v.dir = @DIR )   
+ AND (    
+   EXISTS   
+   (  
+    SELECT BL_BL.T_NBR FROM BL_BL  WITH (NOLOCK) JOIN DQA_VOYAGE WITH (NOLOCK)   
+    ON BL_BL.DQA_VOYAGE_ID = DQA_VOYAGE.VOYAGE_ID  
+    WHERE (DQA_VOYAGE.VOYAGE_STATUS = 'AVAILABLE') AND ( BL_BL.DQA_BL_STATUS = 'PENDING' )   
+    AND( ISNULL(BL_BL.BOL_STATUS, '') NOT IN('MASTER','TEMPMASTER','HOUSE') ) AND ( BL_BL.T_NBR = b.T_NBR )   
+   )  
+  )    
+ )  
+ GROUP BY d.PROCESS_NAME, d.GROUPING_FLG, C.GROUP_ID  
+ ORDER BY C.GROUP_ID, d.PROCESS_NAME  
+  
+END  
+  
+-- [aa] - 09/18/2010  
+-- Log end time  
+EXEC SCREEN_TEST.dbo.usp_LogSProcCallsEnd  
+ @Id = @IdLogOut ,@RowsAffected = @@ROWCOUNT  
+  
+END  
+  
+  
+  
+  
+  
+  
+  
+  
